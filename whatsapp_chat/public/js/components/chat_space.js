@@ -9,6 +9,7 @@ import {
   is_image,
   get_avatar_html,
   mark_message_read,
+  format_whatsapp_template,
 } from './chat_utils';
 
 export default class ChatSpace {
@@ -37,13 +38,12 @@ export default class ChatSpace {
     );
     const header_html = `
 			<div class='chat-header'>
-				${
-          this.profile.is_admin === true
-            ? `<span class='chat-back-button' title='${__('Go Back')}' >
+				${this.profile.is_admin === true
+        ? `<span class='chat-back-button' title='${__('Go Back')}' >
 								${frappe.utils.icon('left')}
 							</span>`
-            : ``
-        }
+        : ``
+      }
 				${this.avatar_html}
 				<div class='chat-profile-info'>
 					<div class='chat-profile-name'>
@@ -247,6 +247,7 @@ export default class ChatSpace {
     };
 
     $('.chat-back-button').on('click', function () {
+      me.chat_list.active_room = null;
       me.chat_list.render_messages();
       me.chat_list.render();
     });
@@ -284,13 +285,6 @@ export default class ChatSpace {
     frappe.realtime.on(this.profile.room, function (res) {
       me.handle_incoming_message(res);
     });
-
-    // Also listen for latest_chat_updates and filter by room
-    frappe.realtime.on('latest_chat_updates', function (res) {
-      if (res.room === me.profile.room) {
-        me.handle_incoming_message(res);
-      }
-    });
   }
 
   handle_incoming_message(res) {
@@ -312,7 +306,6 @@ export default class ChatSpace {
 
   destroy_socket_events() {
     frappe.realtime.off(this.profile.room);
-    frappe.realtime.off('latest_chat_updates');
   }
 
   get_typing_changes(res) {
@@ -373,7 +366,12 @@ export default class ChatSpace {
       }
       $sanitized_content = $url;
     } else {
-      $sanitized_content = __($('<div>').text(content).html());
+      const templateHtml = format_whatsapp_template(content);
+      if (templateHtml) {
+        $sanitized_content = $(templateHtml);
+      } else {
+        $sanitized_content = __($('<div>').text(content).html());
+      }
     }
 
     if (type === 'sender' && this.profile.room_type === 'Group') {
