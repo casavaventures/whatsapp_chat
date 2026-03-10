@@ -185,6 +185,66 @@ function set_notification_count(type) {
   }
 }
 
+function format_whatsapp_template(content) {
+  if (typeof content !== 'string') return null;
+  // Basic heuristic: Is it a stringified dict containing a python dict template?
+  if (!content.trim().startsWith('{') || !content.includes('components')) {
+    return null;
+  }
+
+  try {
+    // Attempt to convert python dict to valid JSON (single quotes to double quotes)
+    // This regex carefully avoids replacing single quotes inside actual word contents like "don't" (if escaped)
+    // but the python dict output usually surrounds keys/values with strictly single quotes unless there's a nested single quote.
+    const jsonStr = content.replace(/'((?:\\'|[^'])*)'/g, '"$1"');
+    const obj = JSON.parse(jsonStr);
+
+    if (obj && obj.components && Array.isArray(obj.components)) {
+      let html = `<div class="whatsapp-template-card">`;
+      // We can display the template name at the top as a faint label
+      html += `<div class="whatsapp-template-header text-muted" style="font-size: 0.75rem; border-bottom: 1px solid var(--border-color); padding-bottom: 4px; margin-bottom: 8px;">
+        <i class="fa fa-file-text-o"></i> ${obj.name || 'Template'}
+      </div>`;
+
+      // Iterate through components
+      obj.components.forEach(component => {
+        if (component.type === 'header' && component.parameters) {
+          component.parameters.forEach(param => {
+            if (param.type === 'document' && param.document) {
+              html += `<div class="whatsapp-template-document" style="margin-bottom: 8px;">
+                  <a href="${param.document.link}" target="_blank" class="btn btn-xs btn-default">
+                    <i class="fa fa-download"></i> ${param.document.filename || 'Download Document'}
+                  </a>
+                </div>`;
+            } else if (param.type === 'image' && param.image) {
+              html += `<div class="whatsapp-template-image" style="margin-bottom: 8px;">
+                  <img src="${param.image.link}" style="max-width: 100%; border-radius: var(--border-radius);" />
+                </div>`;
+            } else if (param.type === 'text' && param.text) {
+              html += `<div class="whatsapp-template-text-header" style="font-weight: bold; margin-bottom: 4px;">${param.text}</div>`;
+            }
+          });
+        }
+        else if (component.type === 'body' && component.parameters) {
+          html += `<div class="whatsapp-template-body" style="background: var(--gray-100); padding: 8px; border-radius: var(--border-radius); font-size: 0.85rem; color: var(--text-color);">`;
+          component.parameters.forEach(param => {
+            if (param.type === 'text') {
+              html += `<div class="whatsapp-template-param"><span class="text-muted">•</span> <b>${param.text}</b></div>`;
+            }
+          });
+          html += `</div>`;
+        }
+      });
+      html += `</div>`;
+      return html;
+    }
+  } catch (e) {
+    // If parsing fails for any reason (e.g. unescaped character), fail silently and fall back to raw text.
+    return null;
+  }
+  return null;
+}
+
 export {
   get_time,
   scroll_to_bottom,
@@ -202,4 +262,5 @@ export {
   set_user_settings,
   get_avatar_html,
   set_notification_count,
+  format_whatsapp_template,
 };
