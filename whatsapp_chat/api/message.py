@@ -37,20 +37,23 @@ def get_all(room: str, user_no: str):
     # Resolve template message content
     for msg in messages:
         if msg.get("message_type") == "Template" and msg.get("template"):
-            try:
+            if frappe.db.exists("WhatsApp Templates", msg["template"]):
                 template_doc = frappe.get_cached_doc("WhatsApp Templates", msg["template"])
                 template_text = template_doc.template or template_doc.template_name or msg["template"]
 
                 # Substitute body parameters if available
                 if msg.get("body_param"):
-                    import json
-                    params = json.loads(msg["body_param"]) if isinstance(msg["body_param"], str) else msg["body_param"]
-                    for key, value in params.items():
-                        template_text = template_text.replace("{{" + key + "}}", str(value))
-
+                    try:
+                        import json
+                        params = json.loads(msg["body_param"]) if isinstance(msg["body_param"], str) else msg["body_param"]
+                        for key, value in params.items():
+                            template_text = template_text.replace("{{" + key + "}}", str(value))
+                    except Exception:
+                        pass
+                
                 msg["content"] = template_text or f"[Template: {msg['template']}]"
-            except Exception:
-                msg["content"] = f"[Template: {msg.get('template', 'Unknown')}]"
+            else:
+                msg["content"] = f"[Template: {msg['template']}]"
 
     return messages
 
