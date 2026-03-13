@@ -11,7 +11,7 @@ def get_all(room: str, user_no: str):
         room (str): Room's name.
 
     """
-    return frappe.db.sql("""
+    messages = frappe.db.sql("""
         SELECT creation,
         case
             when `to` <> '' then `to`
@@ -26,11 +26,36 @@ def get_all(room: str, user_no: str):
             when COALESCE(content_type, 'text') <> 'text' then message
             else NULL
         end as caption,
-        COALESCE(content_type, 'text') as content_type
+        COALESCE(content_type, 'text') as content_type,
+        COALESCE(message_type, '') as message_type,
+        template,
+        body_param
         from `tabWhatsApp Message` where (`to` = %(user_no)s or `from` = %(user_no)s)
-        AND COALESCE(message_type, '') <> 'Template'
         order by creation asc
     """, {"user_no": user_no}, as_dict=True)
+
+    # Resolve template message content
+    for msg in messages:
+        if msg.get("message_type") == "Template" and msg.get("template"):
+            if frappe.db.exists("WhatsApp Templates", msg["template"]):
+                template_doc = frappe.get_cached_doc("WhatsApp Templates", msg["template"])
+                template_text = template_doc.template or template_doc.template_name or msg["template"]
+
+                # Substitute body parameters if available
+                if msg.get("body_param"):
+                    try:
+                        import json
+                        params = json.loads(msg["body_param"]) if isinstance(msg["body_param"], str) else msg["body_param"]
+                        for key, value in params.items():
+                            template_text = template_text.replace("{{" + key + "}}", str(value))
+                    except Exception:
+                        pass
+                
+                msg["content"] = template_text or f"[Template: {msg['template']}]"
+            else:
+                msg["content"] = f"[Template: {msg['template']}]"
+
+    return messages
 
 
 @frappe.whitelist()
@@ -128,6 +153,7 @@ def send(content, user, room, user_no, attachment=None):
 
 
 def last_message(doc, method):
+    frappe.logger().info(f"Socket Debug: Running last_message hook for {doc.name}")
     if doc.type == 'Outgoing':
         mobile_no = doc.to
     else:
@@ -150,7 +176,7 @@ def last_message(doc, method):
         })
         chat_doc.save(ignore_permissions=True)
 
-    if chat_doc.email and doc.type != 'Outgoing':
+    if doc.type != 'Outgoing':
         message_data = {
             "content": doc.message or doc.attach or '',
             "creation": frappe.utils.now(),
@@ -159,17 +185,28 @@ def last_message(doc, method):
             "sender_user_no": mobile_no,
             "user": "Guest"
         }
-        # Notify chat list
-        frappe.publish_realtime(
-            "latest_chat_updates",
-            message_data,
-            user=chat_doc.email
-        )
-        # Notify open chat room
-        frappe.publish_realtime(
-            chat_doc.name,
-            message_data,
-            user=chat_doc.email
-        )
+        
+        # Get all users who have access to WhatsApp Contact
+        users = frappe.get_all('User', filters={'enabled': 1, 'user_type': 'System User'}, fields=['name'])
+        frappe.logger().info(f"Socket Debug: Iterating users for real-time broadcast: {len(users)}")
+        
+        emitted_count = 0
+        for user in users:
+            if frappe.has_permission('WhatsApp Contact', ptype='read', user=user.name):
+                emitted_count += 1
+                # Notify chat list
+                frappe.publish_realtime(
+                    "latest_chat_updates",
+                    message_data,
+                    user=user.name
+                )
+                # Notify open chat room
+                frappe.publish_realtime(
+                    chat_doc.name,
+                    message_data,
+                    user=user.name
+                )
+        
+        frappe.logger().info(f"Socket Debug: Successfully fired publish_realtime to {emitted_count} active users.")
 
     return "ok"

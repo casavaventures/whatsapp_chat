@@ -1,7 +1,11 @@
 import ChatRoom from './chat_room';
 import ChatAddRoom from './chat_add_room';
 import ChatUserSettings from './chat_user_settings';
-import { get_rooms, mark_message_read, set_notification_count } from './chat_utils';
+import {
+  get_rooms, mark_message_read, set_notification_count, is_date_change,
+  get_avatar_html,
+  format_whatsapp_template,
+} from './chat_utils';
 
 export default class ChatList {
   constructor(opts) {
@@ -23,7 +27,7 @@ export default class ChatList {
 
   setup_header() {
     const chat_list_header_html = `
-			<div class='chat-list-header'>
+      <div class='chat-list-header'>
 				<h3>${__('Chats')}</h3>
         <div class='chat-list-icons'>
           <div class='add-room' 
@@ -36,24 +40,24 @@ export default class ChatList {
           </div>
         </div>
 			</div>
-		`;
+  `;
     this.$chat_list.append(chat_list_header_html);
   }
 
   setup_search() {
     const chat_list_search_html = `
-		<div class='chat-search'>
-			<div class='input-group'>
-				<input class='form-control chat-search-box'
-				type='search' 
-				placeholder='${__('Search conversation')}'
-				>	
-				<span class='search-icon'>
-					${frappe.utils.icon('search', 'sm')}
-				</span>
-			</div>
-		</div>
-		`;
+      <div class='chat-search'>
+        <div class='input-group'>
+          <input class='form-control chat-search-box'
+            type='search'
+            placeholder='${__('Search conversation')}'
+            >
+          <span class='search-icon'>
+            ${frappe.utils.icon('search', 'sm')}
+          </span>
+        </div>
+      </div>
+  `;
     this.$chat_list.append(chat_list_search_html);
   }
 
@@ -182,45 +186,62 @@ export default class ChatList {
         return;
       }
 
-      frappe.utils.play_sound('chat-message-receive');
-      const message =
-        res.content.length > 24
-          ? res.content.substring(0, 24) + '...'
-          : res.content;
+      // Check if we are actively viewing THIS specific chat room right now
+      const is_this_room_active = $('.chat-space').is(':visible') && me.active_room === res.room;
 
-      frappe.show_alert({
+      let message;
+
+      // Extract text content safely
+      let raw_content = res.content || res.caption || 'Attachment';
+
+      // Hide raw JSON for template replies in sidebar preview
+      if (format_whatsapp_template(raw_content) !== null) {
+        message = `<i>[WhatsApp Template]</i>`;
+      } else {
+        message =
+          raw_content.length > 24
+            ? raw_content.substring(0, 24) + '...'
+            : raw_content;
+      }
+
+      if (!is_this_room_active) {
+        frappe.utils.play_sound('chat-message-receive');
+        frappe.show_alert({
           message: `<a href="#" data-action="open-chat" style="text-decoration: none; color: inherit;">
-            <strong>${res.contact_name}</strong><br>
-            <span style="opacity: 0.9;">${message}</span>
-          </a>`,
+              <strong>${res.contact_name}</strong><br>
+              <span style="opacity: 0.9;">${message}</span>
+            </a>`,
           indicator: 'green'
-      }, 5, {
-        'open-chat': function() {
-          // Open chat widget if closed
-          if (!$('.chat-element').is(':visible')) {
-            $('.chat-navbar-icon').click();
+        }, 5, {
+          'open-chat': function () {
+            // Open chat widget if closed
+            if (!$('.chat-element').is(':visible')) {
+              $('.chat-navbar-icon').click();
+            }
+            // Open the specific chat room after a small delay for widget to open
+            setTimeout(() => {
+              chat_room_item[1].$chat_room.click();
+            }, 100);
           }
-          // Open the specific chat room after a small delay for widget to open
-          setTimeout(() => {
-            chat_room_item[1].$chat_room.click();
-          }, 100);
-        }
-      });
+        });
+      }
 
       chat_room_item[1].set_last_message(message, res.creation);
 
+      // Always reposition the room in the underlying array
+      me.move_room_to_top(chat_room_item);
+
+      // If list is visible, also visually reposition it in DOM immediately
       if ($('.chat-list').is(':visible')) {
-        chat_room_item[1].set_as_unread();
         chat_room_item[1].move_to_top();
-        me.move_room_to_top(chat_room_item);
-      } else if ($('.chat-space').is(':visible')) {
+      }
+
+      if (is_this_room_active) {
+        // User is actively looking at this conversation, so consider it read
         mark_message_read(res.room);
       } else {
-        // Chat widget is closed - update counter only if room was previously read
-        if (chat_room_item[1].profile.is_read === 1) {
-          set_notification_count('increment');
-          chat_room_item[1].profile.is_read = 0;
-        }
+        // User is elsewhere (widget closed, list view, or looking at a different room)
+        chat_room_item[1].set_as_unread();
       }
     });
 
@@ -246,24 +267,22 @@ export default class ChatList {
         frappe.utils.play_sound('chat-notification');
       }
 
-      if (res.members.includes(me.user_email)) {
-        if (res.room_type === 'Direct') {
-          res.room_name =
-            res.member_names[0]['email'] == me.user_email
-              ? res.member_names[1]['name']
-              : res.member_names[0]['name'];
+      if (res.room_type === 'Direct') {
+        res.room_name =
+          res.member_names[0]['email'] == me.user_email
+            ? res.member_names[1]['name']
+            : res.member_names[0]['name'];
 
-          res.opposite_person_email =
-            res.member_names[0]['email'] == me.user_email
-              ? res.member_names[1]['email']
-              : res.member_names[0]['email'];
-        }
-
-        res.user = me.user;
-        res.is_admin = me.is_admin;
-        res.user_email = me.user_email;
-        me.create_new_room(res);
+        res.opposite_person_email =
+          res.member_names[0]['email'] == me.user_email
+            ? res.member_names[1]['email']
+            : res.member_names[0]['email'];
       }
+
+      res.user = me.user;
+      res.is_admin = me.is_admin;
+      res.user_email = me.user_email;
+      me.create_new_room(res);
     });
   }
 }

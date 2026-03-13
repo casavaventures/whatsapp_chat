@@ -39,9 +39,8 @@ export default class ChatRoom {
 						style='display: ${this.profile.is_read ? 'none' : 'inline-block'}'
 					></div>
 				</div>
-				<div style='color: ${
-          this.profile.is_read ? 'var(--text-muted)' : 'var(--text-color)'
-        }' class='last-message'>${__(last_message)}</div>
+				<div style='color: ${this.profile.is_read ? 'var(--text-muted)' : 'var(--text-color)'
+      }' class='last-message'>${__(last_message)}</div>
 			</div>
 		`;
     const date_html = `
@@ -108,6 +107,7 @@ export default class ChatRoom {
       if (typeof this.chat_space !== 'undefined') {
         this.chat_space.destroy_socket_events();
       }
+      this.chat_list.active_room = this.profile.room;
       this.chat_space = new ChatSpace({
         $wrapper: this.$wrapper,
         chat_list: this.chat_list,

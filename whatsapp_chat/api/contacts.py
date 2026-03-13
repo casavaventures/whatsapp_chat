@@ -15,11 +15,9 @@ def create(contact_name, mobile_no, email):
 
 
 @frappe.whitelist()
-def get(email):
-    """Get all contacts assigned to email."""
+def get(email=None):
+    """Get all contacts (Shared Inbox)"""
     return frappe.db.get_all(
         "WhatsApp Contact",
-        filters={"email": ['in', [email, '']]},
         fields=["*"])
-    return data
 
