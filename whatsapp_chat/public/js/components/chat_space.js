@@ -441,8 +441,8 @@ export default class ChatSpace {
 
   receive_message(res, time) {
     let chat_type = 'sender';
-    // Skip if this is our own outgoing message (sender_user_no would be empty or 'Administrator' for outgoing)
-    if (res.sender_user_no === 'Administrator' || res.sender_user_no === this.profile.user) {
+    // Skip if the current user sent this message (already shown via optimistic UI add)
+    if (res.sent_by && res.sent_by === frappe.session.user) {
       return;
     }
 
@@ -454,7 +454,10 @@ export default class ChatSpace {
       frappe.utils.play_sound('chat-message-receive');
     }
 
-    if (this.profile.room_type === 'Guest') {
+    // Outgoing messages (sender_user_no matches contact phone) go on the right
+    if (res.sender_user_no === this.profile.user_email) {
+      chat_type = 'recipient';
+    } else if (this.profile.room_type === 'Guest') {
       if (this.profile.is_admin === true && res.user !== 'Guest') {
         chat_type = 'recipient';
       }

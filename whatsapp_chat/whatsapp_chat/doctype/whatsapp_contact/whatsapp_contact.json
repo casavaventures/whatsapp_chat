@@ -5,6 +5,7 @@
  "doctype": "DocType",
  "engine": "InnoDB",
  "field_order": [
+  "contact",
   "contact_name",
   "mobile_no",
   "is_read",
@@ -13,14 +14,26 @@
  ],
  "fields": [
   {
-   "fieldname": "contact_name",
-   "fieldtype": "Data",
-   "label": "Contact Name"
+   "fieldname": "contact",
+   "fieldtype": "Link",
+   "label": "Contact",
+   "options": "Contact"
   },
   {
+   "fetch_from": "contact.full_name",
+   "fetch_if_empty": 1,
+   "fieldname": "contact_name",
+   "fieldtype": "Data",
+   "label": "Contact Name",
+   "read_only_depends_on": "contact"
+  },
+  {
+   "fetch_from": "contact.mobile_no",
+   "fetch_if_empty": 1,
    "fieldname": "mobile_no",
    "fieldtype": "Data",
    "label": "Mobile No",
+   "read_only_depends_on": "contact",
    "unique": 1
   },
   {
@@ -44,7 +57,7 @@
  ],
  "index_web_pages_for_search": 1,
  "links": [],
- "modified": "2024-02-07 11:19:07.878593",
+ "modified": "2026-03-24 14:00:00.000000",
  "modified_by": "Administrator",
  "module": "Whatsapp Chat",
  "name": "WhatsApp Contact",
@@ -63,7 +76,9 @@
    "write": 1
   }
  ],
+ "show_title_field_in_link": 1,
  "sort_field": "modified",
  "sort_order": "DESC",
- "states": []
+ "states": [],
+ "title_field": "contact_name"
 }

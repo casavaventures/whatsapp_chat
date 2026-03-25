@@ -4,13 +4,19 @@ import mimetypes
 
 
 @frappe.whitelist()
-def get_all(room: str, user_no: str):
+def get_all(room: str, user_no: str = None):
     """Get all the messages of a particular room
 
     Args:
         room (str): Room's name.
+        user_no (str, optional): User's mobile number. Derived from room if not provided.
 
     """
+    if not user_no:
+        user_no = frappe.db.get_value("WhatsApp Contact", room, "mobile_no")
+        if not user_no:
+            return []
+
     messages = frappe.db.sql("""
         SELECT creation,
         case
@@ -153,60 +159,76 @@ def send(content, user, room, user_no, attachment=None):
 
 
 def last_message(doc, method):
-    frappe.logger().info(f"Socket Debug: Running last_message hook for {doc.name}")
     if doc.type == 'Outgoing':
         mobile_no = doc.to
     else:
         mobile_no = doc.get("from")
 
-
     contact_name = frappe.db.get_value("WhatsApp Contact", filters={"mobile_no": mobile_no})
     if contact_name:
-        chat_doc = frappe.get_doc("WhatsApp Contact", contact_name)
-        chat_doc.last_message = doc.message
-        chat_doc.is_read = 0
-        chat_doc.save(ignore_permissions=True)
+        # Use set_value to avoid "Document has been modified" conflicts when
+        # the chatbot creates outgoing messages during incoming message processing.
+        frappe.db.set_value("WhatsApp Contact", contact_name, {
+            "last_message": doc.message,
+            "is_read": 0
+        })
+        contact_data = frappe.db.get_value(
+            "WhatsApp Contact", contact_name,
+            ["name", "contact_name"], as_dict=True
+        )
     else:
         chat_doc = frappe.get_doc({
             "doctype": "WhatsApp Contact",
             "mobile_no": mobile_no,
             "last_message": doc.message,
-            "contact_name": mobile_no,
+            "contact_name": doc.profile_name or mobile_no,
             "is_read": 0
         })
         chat_doc.save(ignore_permissions=True)
+        contact_data = {"name": chat_doc.name, "contact_name": chat_doc.contact_name}
 
-    if doc.type != 'Outgoing':
-        message_data = {
-            "content": doc.message or doc.attach or '',
-            "creation": frappe.utils.now(),
-            "room": chat_doc.name,
-            "contact_name": chat_doc.contact_name,
-            "sender_user_no": mobile_no,
-            "user": "Guest"
-        }
-        
-        # Get all users who have access to WhatsApp Contact
-        users = frappe.get_all('User', filters={'enabled': 1, 'user_type': 'System User'}, fields=['name'])
-        frappe.logger().info(f"Socket Debug: Iterating users for real-time broadcast: {len(users)}")
-        
-        emitted_count = 0
-        for user in users:
-            if frappe.has_permission('WhatsApp Contact', ptype='read', user=user.name):
-                emitted_count += 1
-                # Notify chat list
-                frappe.publish_realtime(
-                    "latest_chat_updates",
-                    message_data,
-                    user=user.name
-                )
-                # Notify open chat room
-                frappe.publish_realtime(
-                    chat_doc.name,
-                    message_data,
-                    user=user.name
-                )
-        
-        frappe.logger().info(f"Socket Debug: Successfully fired publish_realtime to {emitted_count} active users.")
+    # Resolve content — template messages have empty doc.message
+    content = doc.message or doc.attach or ''
+    if getattr(doc, 'message_type', None) == 'Template' and getattr(doc, 'template', None):
+        try:
+            if frappe.db.exists("WhatsApp Templates", doc.template):
+                tpl = frappe.get_cached_doc("WhatsApp Templates", doc.template)
+                content = tpl.template or tpl.template_name or doc.template
+                if getattr(doc, 'body_param', None):
+                    import json
+                    params = json.loads(doc.body_param) if isinstance(doc.body_param, str) else doc.body_param
+                    for key, value in params.items():
+                        content = content.replace("{{" + key + "}}", str(value))
+            else:
+                content = f"[Template: {doc.template}]"
+        except Exception:
+            content = f"[Template: {doc.template}]"
+
+    # Broadcast realtime updates for BOTH incoming and outgoing messages
+    # so chatbot responses also appear in the chat UI.
+    message_data = {
+        "content": content,
+        "creation": frappe.utils.now(),
+        "room": contact_data["name"],
+        "contact_name": contact_data.get("contact_name") or mobile_no,
+        "sender_user_no": doc.to or '',
+        "user": "Guest" if doc.type != 'Outgoing' else "System",
+        "sent_by": frappe.session.user,
+        "is_outgoing": doc.type == 'Outgoing'
+    }
+
+    users = frappe.get_all('User', filters={'enabled': 1, 'user_type': 'System User'}, fields=['name'])
+    for user in users:
+        if frappe.has_permission('WhatsApp Contact', ptype='read', user=user.name):
+            frappe.publish_realtime(
+                "latest_chat_updates",
+                message_data,
+                user=user.name
+            )
+            frappe.publish_realtime(
+                contact_data["name"],
+                message_data,
+                user=user.name
+            )
 
     return "ok"
